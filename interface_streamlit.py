@@ -185,19 +185,23 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Initialize session state for authentication
+        # Initialize session state variables
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
-    if 'auth_user' not in st.session_state:
-        st.session_state.auth_user = None
     if 'sheets_client' not in st.session_state:
         st.session_state.sheets_client = None
+    if 'sheets_data' not in st.session_state:
+        st.session_state.sheets_data = None
     if 'json_data_ayrton' not in st.session_state:
         st.session_state.json_data_ayrton = None
     if 'json_data_pedro' not in st.session_state:
         st.session_state.json_data_pedro = None
-    if 'sheets_data' not in st.session_state:
-        st.session_state.sheets_data = None
+    if 'current_question_ayrton' not in st.session_state:
+        st.session_state.current_question_ayrton = None
+    if 'current_question_pedro' not in st.session_state:
+        st.session_state.current_question_pedro = None
+    if 'force_new_question' not in st.session_state:
+        st.session_state.force_new_question = False
     
     # Sidebar para configurações globais
     with st.sidebar:
@@ -761,28 +765,64 @@ def main():
         )
         
         st.markdown('---')
+        
+        # Botão para pegar nova pergunta
+        if st.button("🔄 Nova Pergunta", help="Clique para carregar uma nova pergunta aleatória"):
+            st.session_state.force_new_question = True
+            st.rerun()
+        
+        st.markdown('---')
 
     # Determina pergunta aleatória baseada na página selecionada
-    # Seleciona JSON baseado na página
+    # Só seleciona nova pergunta se não houver uma atual ou se foi forçado
     if page == 'Ayrton':
         current_json = st.session_state.json_data_ayrton
-        next_index, next_data = select_random_question(
-            st.session_state.json_data_ayrton, 
-            st.session_state.sheets_data, 
-            'Ayrton'
-        )
+        
+        # Verifica se precisa de uma nova pergunta
+        if (st.session_state.current_question_ayrton is None or 
+            st.session_state.force_new_question):
+            
+            next_index, next_data = select_random_question(
+                st.session_state.json_data_ayrton, 
+                st.session_state.sheets_data, 
+                'Ayrton'
+            )
+            st.session_state.current_question_ayrton = (next_index, next_data)
+            st.session_state.force_new_question = False
+        else:
+            # Usa a pergunta já armazenada
+            next_index, next_data = st.session_state.current_question_ayrton
+            
     else:  # Pedro
         current_json = st.session_state.json_data_pedro
-        next_index, next_data = select_random_question(
-            st.session_state.json_data_pedro, 
-            st.session_state.sheets_data, 
-            'Pedro'
-        )
+        
+        # Verifica se precisa de uma nova pergunta
+        if (st.session_state.current_question_pedro is None or 
+            st.session_state.force_new_question):
+            
+            next_index, next_data = select_random_question(
+                st.session_state.json_data_pedro, 
+                st.session_state.sheets_data, 
+                'Pedro'
+            )
+            st.session_state.current_question_pedro = (next_index, next_data)
+            st.session_state.force_new_question = False
+        else:
+            # Usa a pergunta já armazenada
+            next_index, next_data = st.session_state.current_question_pedro
 
     if not next_data:
         st.info(f'✅ Não há mais perguntas disponíveis no JSON para {page}.')
         st.balloons()
         st.stop()
+
+    # Mostrar estatísticas
+    used_questions = get_used_questions(st.session_state.sheets_data, page)
+    available_questions = get_available_questions(current_json, used_questions)
+    total_questions = len(current_json)
+    used_questions_count = total_questions - len(available_questions)
+    
+    st.info(f"📊 Estatísticas para {page}: {used_questions_count}/{total_questions} perguntas utilizadas | {len(available_questions)} restantes")
 
     with col1:
         # Informações completas da pergunta atual
@@ -893,6 +933,14 @@ def main():
                     
                     st.success(f'✅ Adicionado ao {sheet_type} - Página {page}!')
                     st.balloons()
+                    
+                    # Força uma nova pergunta após salvar
+                    st.session_state.force_new_question = True
+                    if page == 'Ayrton':
+                        st.session_state.current_question_ayrton = None
+                    else:
+                        st.session_state.current_question_pedro = None
+                    
                     # Recarrega a página para mostrar a próxima pergunta
                     st.rerun()
 
