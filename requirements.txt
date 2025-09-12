@@ -1,6 +1,4 @@
-# Dependências para interface.py
-# Tkinter já vem com Python padrão, mas para garantir compatibilidade em ambientes Linux:
 pandas
-gspread
-oauth2client
-streamlit
+gspread>=5.0.0,<7
+oauth2client>=4.1.3,<5
+streamlit>=1.20,<2

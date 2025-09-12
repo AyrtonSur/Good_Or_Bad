@@ -32,6 +32,48 @@ def read_json(filename):
     with open(filename, encoding='utf-8') as f:
         return json.load(f)
 
+
+def load_json_from_secrets_or_file(key_name='JSON_PAYLOAD'):
+    """Try to load JSON from Streamlit secrets (as a string) or fall back to a local file.
+
+    Expected secret key: st.secrets['JSON_PAYLOAD'] containing the full JSON text.
+    """
+    # First prefer st.secrets if available
+    try:
+        if hasattr(st, 'secrets') and st.secrets:
+            payload = st.secrets.get(key_name)
+            if payload:
+                try:
+                    return json.loads(payload)
+                except Exception:
+                    # If payload is a path inside secrets dict, try loading that path
+                    pass
+    except Exception:
+        # Accessing st.secrets can fail in some contexts, ignore and fallback
+        pass
+
+    # Fallback to reading the local file
+    return read_json(JSON_FILE)
+
+
+def write_credentials_from_secrets(key_name='GSPREAD_CREDENTIALS_JSON'):
+    """If service account JSON is provided in secrets, write it to `credentials.json`.
+
+    Expects st.secrets['GSPREAD_CREDENTIALS_JSON'] to be the full JSON text.
+    """
+    try:
+        creds_text = None
+        if hasattr(st, 'secrets') and st.secrets:
+            creds_text = st.secrets.get(key_name)
+
+        if creds_text:
+            with open(CREDENTIALS_FILE, 'w', encoding='utf-8') as f:
+                f.write(creds_text)
+            return True
+    except Exception:
+        pass
+    return False
+
 def read_sheet_data(client, sheet_id, worksheet_name):
     """Lê dados de uma planilha Google Sheets"""
     try:
@@ -503,8 +545,12 @@ def main():
 
     # Carregamento dos dados
     with st.spinner('Carregando dados...'):
-        json_data = read_json(JSON_FILE)
-        
+        # If secrets contain credentials, write them to local file for gspread
+        write_credentials_from_secrets()
+
+        # Load JSON either from secrets or local file
+        json_data = load_json_from_secrets_or_file()
+
         # Carrega dados das planilhas para determinar a próxima pergunta
         # Use cached reads to avoid network calls on every widget interaction
         sheets_data = {
