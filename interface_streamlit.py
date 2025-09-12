@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -26,7 +27,25 @@ def authenticate_google_sheets():
     """Autentica e retorna o cliente do Google Sheets"""
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        
+        # Try to get credentials from secrets first
+        creds_text = None
+        try:
+            if hasattr(st, 'secrets') and st.secrets:
+                creds_text = st.secrets.get('GSPREAD_CREDENTIALS_JSON')
+        except Exception:
+            pass
+        
+        if creds_text:
+            # Use credentials from secrets (for deployment)
+            import json
+            from io import StringIO
+            creds_dict = json.loads(creds_text)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        else:
+            # Fallback to local file (for development)
+            creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        
         client = gspread.authorize(creds)
         return client
     except Exception as e:
@@ -68,7 +87,8 @@ def load_json_from_secrets_or_file(key_name='JSON_PAYLOAD', fallback_file=None):
 
 def write_credentials_from_secrets(key_name='GSPREAD_CREDENTIALS_JSON'):
     """If service account JSON is provided in secrets, write it to `credentials.json`.
-
+    This is mainly for backward compatibility with local development.
+    
     Expects st.secrets['GSPREAD_CREDENTIALS_JSON'] to be the full JSON text.
     """
     try:
@@ -76,7 +96,8 @@ def write_credentials_from_secrets(key_name='GSPREAD_CREDENTIALS_JSON'):
         if hasattr(st, 'secrets') and st.secrets:
             creds_text = st.secrets.get(key_name)
 
-        if creds_text:
+        if creds_text and not os.path.exists(CREDENTIALS_FILE):
+            # Only write file if it doesn't exist (for local development)
             with open(CREDENTIALS_FILE, 'w', encoding='utf-8') as f:
                 f.write(creds_text)
             return True
