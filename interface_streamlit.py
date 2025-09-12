@@ -4,11 +4,18 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+# Optional authentication library
+try:
+    import streamlit_authenticator as stauth
+except ImportError:
+    stauth = None
+
 # IDs dos Google Sheets (extraídos das URLs)
 SHEETS_GOOD_ID = '1Iimtpui2WJlzrIGbJma6ucGrefuKWsGjshG9LCBEyHE'
 SHEETS_BAD_ID = '1ZJFoD_y8uNXXEWhB-iYTI-xkfQ8XxmDvInNx3PQkgUI'
 
-JSON_FILE = 'combined_jsons_without_context_clean_shuffled_part2.json'
+JSON_FILE_AYRTON = 'combined_jsons_without_context_clean_shuffled_part2.json'
+JSON_FILE_PEDRO = 'combined_jsons_without_context_clean_shuffled_part1.json'
 CREDENTIALS_FILE = 'credentials.json'
 
 # Campos extras do CSV/Sheets
@@ -33,7 +40,7 @@ def read_json(filename):
         return json.load(f)
 
 
-def load_json_from_secrets_or_file(key_name='JSON_PAYLOAD'):
+def load_json_from_secrets_or_file(key_name='JSON_PAYLOAD', fallback_file=None):
     """Try to load JSON from Streamlit secrets (as a string) or fall back to a local file.
 
     Expected secret key: st.secrets['JSON_PAYLOAD'] containing the full JSON text.
@@ -53,7 +60,10 @@ def load_json_from_secrets_or_file(key_name='JSON_PAYLOAD'):
         pass
 
     # Fallback to reading the local file
-    return read_json(JSON_FILE)
+    if fallback_file:
+        return read_json(fallback_file)
+    else:
+        return read_json(JSON_FILE_AYRTON)  # Default fallback
 
 
 def write_credentials_from_secrets(key_name='GSPREAD_CREDENTIALS_JSON'):
@@ -125,22 +135,45 @@ def find_json_index(json_data, question):
             return i
     return None
 
-def determine_next_question(json_data, sheets_data):
-    """Determina qual é a próxima pergunta baseada nos dados das planilhas"""
-    max_index = -1
+def get_used_questions(sheets_data, user):
+    """Retorna set de perguntas já utilizadas por um usuário específico"""
+    used_questions = set()
     
-    # Verifica todas as planilhas e páginas para encontrar o maior índice
     for sheet_type in ['Good', 'Bad']:
-        for page in ['Ayrton', 'Pedro']:
-            df = sheets_data[sheet_type][page]
-            if not df.empty and 'Pergunta' in df.columns:
-                last_question = df['Pergunta'].iloc[-1] if len(df) > 0 else ''
-                if last_question:
-                    index = find_json_index(json_data, last_question)
-                    if index is not None and index > max_index:
-                        max_index = index
+        df = sheets_data[sheet_type][user]
+        if not df.empty and 'Pergunta' in df.columns:
+            used_questions.update(df['Pergunta'].tolist())
+    
+    return used_questions
 
-    return max_index + 1
+def get_available_questions(json_data, used_questions):
+    """Retorna lista de perguntas disponíveis (não utilizadas) do JSON"""
+    available = []
+    
+    for i, item in enumerate(json_data):
+        question = item.get('question', '')
+        if question and question not in used_questions:
+            available.append((i, item))
+    
+    return available
+
+def select_random_question(json_data, sheets_data, user):
+    """Seleciona uma pergunta aleatória que ainda não foi utilizada"""
+    import random
+    
+    # Pega perguntas já utilizadas
+    used_questions = get_used_questions(sheets_data, user)
+    
+    # Pega perguntas disponíveis
+    available_questions = get_available_questions(json_data, used_questions)
+    
+    if not available_questions:
+        return None, None  # Não há mais perguntas disponíveis
+    
+    # Seleciona uma pergunta aleatória
+    random_index, random_question = random.choice(available_questions)
+    
+    return random_index, random_question
 
 def main():
     # Configuração da página
@@ -149,6 +182,20 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+    
+    # Initialize session state for authentication
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if 'auth_user' not in st.session_state:
+        st.session_state.auth_user = None
+    if 'sheets_client' not in st.session_state:
+        st.session_state.sheets_client = None
+    if 'json_data_ayrton' not in st.session_state:
+        st.session_state.json_data_ayrton = None
+    if 'json_data_pedro' not in st.session_state:
+        st.session_state.json_data_pedro = None
+    if 'sheets_data' not in st.session_state:
+        st.session_state.sheets_data = None
     
     # Sidebar para configurações globais
     with st.sidebar:
@@ -533,48 +580,210 @@ def main():
             """, unsafe_allow_html=True)
         
         st.markdown("---")
+        
+        # Botão para recarregar dados
+        if st.button("🔄 Recarregar dados", help="Recarrega dados do Google Sheets"):
+            st.session_state.sheets_data = None
+            st.session_state.json_data_ayrton = None
+            st.session_state.json_data_pedro = None
+            st.rerun()
+        
+        # Estatísticas de progresso (só mostrar se os dados estão carregados)
+        if (st.session_state.sheets_data is not None and 
+            st.session_state.json_data_ayrton is not None and 
+            st.session_state.json_data_pedro is not None):
+            
+            st.markdown("---")
+            st.markdown("📈 **Progresso:**")
+            
+            for user in ['Ayrton', 'Pedro']:
+                json_data = st.session_state.json_data_ayrton if user == 'Ayrton' else st.session_state.json_data_pedro
+                used_questions = get_used_questions(st.session_state.sheets_data, user)
+                total = len(json_data)
+                used = len(used_questions)
+                available = total - used
+                
+                st.markdown(f"**{user}:** {used}/{total} ({available} restantes)")
+                if total > 0:
+                    progress = used / total
+                    st.progress(progress)
     
     # Título principal
     st.title('🔍 Good or Bad Sheets Adder')
     st.markdown('---')
 
-    # Autenticação
-    client = authenticate_google_sheets()
-    if not client:
-        st.stop()
-
-    # Carregamento dos dados
-    with st.spinner('Carregando dados...'):
-        # If secrets contain credentials, write them to local file for gspread
-        write_credentials_from_secrets()
-
-        # Load JSON either from secrets or local file
-        json_data = load_json_from_secrets_or_file()
-
-        # Carrega dados das planilhas para determinar a próxima pergunta
-        # Use cached reads to avoid network calls on every widget interaction
-        sheets_data = {
-            'Good': {
-                'Ayrton': read_sheet_cached(client, SHEETS_GOOD_ID, 'Ayrton'),
-                'Pedro': read_sheet_cached(client, SHEETS_GOOD_ID, 'Pedro')
-            },
-            'Bad': {
-                'Ayrton': read_sheet_cached(client, SHEETS_BAD_ID, 'Ayrton'),
-                'Pedro': read_sheet_cached(client, SHEETS_BAD_ID, 'Pedro')
+    # Authentication: use streamlit-authenticator if available and configured
+    if not st.session_state.authenticated and stauth is not None and st.secrets.get('auth'):
+        try:
+            auth_conf = st.secrets['auth']
+            
+            # Handle different possible structures
+            if 'users' in auth_conf:
+                users_data = auth_conf['users']
+                
+                # If users is a list of dicts
+                if isinstance(users_data, list):
+                    names = [u['name'] for u in users_data]
+                    usernames = [u['username'] for u in users_data]
+                    passwords = [u['password'] for u in users_data]
+                # If users is a dict with numeric keys (TOML array parsed differently)
+                elif isinstance(users_data, dict):
+                    # Try to get values from numbered keys (0, 1, 2, etc.)
+                    user_list = []
+                    for key in sorted(users_data.keys()):
+                        if isinstance(key, (int, str)) and str(key).isdigit():
+                            user_list.append(users_data[key])
+                    
+                    if user_list:
+                        names = [u['name'] for u in user_list]
+                        usernames = [u['username'] for u in user_list]
+                        passwords = [u['password'] for u in user_list]
+                    else:
+                        raise ValueError("Could not parse users structure")
+                else:
+                    raise ValueError(f"Unexpected users data type: {type(users_data)}")
+            else:
+                raise ValueError("No 'users' key found in auth config")
+            
+            # Hash passwords using updated API (no arguments to constructor)
+            hasher = stauth.Hasher()
+            hashed_passwords = [hasher.hash(pwd) for pwd in passwords]
+            
+            # Create credentials in the format expected by streamlit-authenticator
+            credentials = {
+                'usernames': {}
             }
-        }
+            
+            for i, username in enumerate(usernames):
+                credentials['usernames'][username] = {
+                    'name': names[i],
+                    'password': hashed_passwords[i]
+                }
+            
+            authenticator = stauth.Authenticate(
+                credentials,
+                auth_conf.get('cookie_name', 'app_cookie'),
+                auth_conf.get('signature_key', 'secret_signature'),
+                auth_conf.get('cookie_expiry_days', 30)
+            )
+            
+            # Try different login method signatures based on version
+            try:
+                # Try newer API first
+                login_result = authenticator.login()
+                if login_result is not None:
+                    name, authentication_status, username = login_result
+                else:
+                    # If login returns None, try alternative approach
+                    name = st.session_state.get('name')
+                    authentication_status = st.session_state.get('authentication_status')
+                    username = st.session_state.get('username')
+            except Exception as login_error:
+                st.error(f'Erro no método login: {login_error}')
+                # Try older API
+                try:
+                    name, authentication_status, username = authenticator.login(location='main')
+                except:
+                    # Last resort - try without parameters
+                    result = authenticator.login()
+                    if result:
+                        name, authentication_status, username = result
+                    else:
+                        name, authentication_status, username = None, None, None
+            
+            if authentication_status is False:
+                st.error('Usuário ou senha inválidos')
+                st.stop()
+            if authentication_status is None:
+                st.warning('Por favor, faça login')
+                st.stop()
+            
+            # Store authentication status
+            st.session_state.authenticated = True
+            st.session_state.auth_user = name
+            
+        except Exception as e:
+            st.error('Erro na autenticação: ' + str(e))
+            # continue without auth if config is invalid
+            st.session_state.authenticated = True  # Skip auth if there's an error
+    elif not st.session_state.authenticated:
+        # If stauth not installed or no auth config, skip authentication
+        if stauth is None:
+            st.info('streamlit-authenticator não instalado — sem autenticação.')
+        elif not st.secrets.get('auth'):
+            st.info('Nenhuma configuração de autenticação encontrada em st.secrets["auth"]')
+        st.session_state.authenticated = True
 
-    # Determina próxima questão
-    next_index = determine_next_question(json_data, sheets_data)
-    next_data = json_data[next_index] if next_index < len(json_data) else None
+    # Only authenticate and load data once
+    if st.session_state.sheets_client is None:
+        st.session_state.sheets_client = authenticate_google_sheets()
+        if not st.session_state.sheets_client:
+            st.stop()
 
-    if not next_data:
-        st.info('✅ Não há mais perguntas disponíveis no JSON.')
-        st.balloons()
-        st.stop()
+    # Load data only once
+    if (st.session_state.json_data_ayrton is None or 
+        st.session_state.json_data_pedro is None or 
+        st.session_state.sheets_data is None):
+        with st.spinner('Carregando dados iniciais...'):
+            # If secrets contain credentials, write them to local file for gspread
+            write_credentials_from_secrets()
+
+            # Load JSON files for both users
+            st.session_state.json_data_ayrton = load_json_from_secrets_or_file('JSON_PAYLOAD', JSON_FILE_AYRTON)
+            st.session_state.json_data_pedro = load_json_from_secrets_or_file('JSON_PAYLOAD_PEDRO', JSON_FILE_PEDRO)
+
+            # Carrega dados das planilhas para determinar a próxima pergunta
+            # Use cached reads to avoid network calls on every widget interaction
+            st.session_state.sheets_data = {
+                'Good': {
+                    'Ayrton': read_sheet_cached(st.session_state.sheets_client, SHEETS_GOOD_ID, 'Ayrton'),
+                    'Pedro': read_sheet_cached(st.session_state.sheets_client, SHEETS_GOOD_ID, 'Pedro')
+                },
+                'Bad': {
+                    'Ayrton': read_sheet_cached(st.session_state.sheets_client, SHEETS_BAD_ID, 'Ayrton'),
+                    'Pedro': read_sheet_cached(st.session_state.sheets_client, SHEETS_BAD_ID, 'Pedro')
+                }
+            }
 
     # Layout em duas colunas
     col1, col2 = st.columns([2, 1])
+    
+    # Primeiro, vamos criar os controles na coluna 2 para definir a página
+    with col2:
+        # Sidebar para controles
+        st.subheader('⚙️ Configurações')
+        
+        # Escolha da página primeiro (determina qual JSON usar)
+        st.markdown('**Usuário:**')
+        page = st.radio(
+            'Página:', 
+            ['Ayrton', 'Pedro'],
+            help="Escolha para qual usuário adicionar a pergunta"
+        )
+        
+        st.markdown('---')
+
+    # Determina pergunta aleatória baseada na página selecionada
+    # Seleciona JSON baseado na página
+    if page == 'Ayrton':
+        current_json = st.session_state.json_data_ayrton
+        next_index, next_data = select_random_question(
+            st.session_state.json_data_ayrton, 
+            st.session_state.sheets_data, 
+            'Ayrton'
+        )
+    else:  # Pedro
+        current_json = st.session_state.json_data_pedro
+        next_index, next_data = select_random_question(
+            st.session_state.json_data_pedro, 
+            st.session_state.sheets_data, 
+            'Pedro'
+        )
+
+    if not next_data:
+        st.info(f'✅ Não há mais perguntas disponíveis no JSON para {page}.')
+        st.balloons()
+        st.stop()
 
     with col1:
         # Informações completas da pergunta atual
@@ -598,9 +807,6 @@ def main():
         st.info(next_data['answer'])
 
     with col2:
-        # Sidebar para controles
-        st.subheader('⚙️ Configurações')
-        
         # Campos extras
         st.markdown('**Campos extras:**')
         extra_values = {}
@@ -616,19 +822,19 @@ def main():
             )
 
         st.markdown('---')
+        
+        # Botão para pular pergunta (nova pergunta aleatória)
+        if st.button("🎲 Nova pergunta aleatória", help="Seleciona uma nova pergunta aleatória"):
+            st.rerun()
 
-        # Escolha da planilha e página
+        st.markdown('---')
+
+        # Escolha da planilha
         st.markdown('**Destino:**')
         sheet_type = st.radio(
             'Planilha:', 
             ['Good', 'Bad'],
             help="Escolha se a pergunta é boa ou ruim"
-        )
-        
-        page = st.radio(
-            'Página:', 
-            ['Ayrton', 'Pedro'],
-            help="Escolha em qual página adicionar"
         )
 
         # Comentário
@@ -666,13 +872,26 @@ def main():
                 sheet_id = SHEETS_GOOD_ID if sheet_type == 'Good' else SHEETS_BAD_ID
 
                 # Adiciona ao Google Sheets
-                if append_to_sheet(client, sheet_id, page, row):
+                if append_to_sheet(st.session_state.sheets_client, sheet_id, page, row):
                     # Clear cached sheet reads so UI shows updated data next render
                     try:
                         st.cache_data.clear()
                     except Exception:
                         # Older Streamlit may not have clear(); ignore if fails
                         pass
+                    
+                    # Update sheets data in session state
+                    st.session_state.sheets_data = {
+                        'Good': {
+                            'Ayrton': read_sheet_cached(st.session_state.sheets_client, SHEETS_GOOD_ID, 'Ayrton'),
+                            'Pedro': read_sheet_cached(st.session_state.sheets_client, SHEETS_GOOD_ID, 'Pedro')
+                        },
+                        'Bad': {
+                            'Ayrton': read_sheet_cached(st.session_state.sheets_client, SHEETS_BAD_ID, 'Ayrton'),
+                            'Pedro': read_sheet_cached(st.session_state.sheets_client, SHEETS_BAD_ID, 'Pedro')
+                        }
+                    }
+                    
                     st.success(f'✅ Adicionado ao {sheet_type} - Página {page}!')
                     st.balloons()
                     # Recarrega a página para mostrar a próxima pergunta
@@ -680,7 +899,20 @@ def main():
 
     # Informações adicionais no rodapé
     st.markdown('---')
-    st.caption(f'📊 Pergunta {next_index + 1} de {len(json_data)} | 🔗 Conectado ao Google Sheets')
+    
+    # Calcula estatísticas de perguntas
+    used_questions = get_used_questions(st.session_state.sheets_data, page)
+    total_questions = len(current_json)
+    used_count = len(used_questions)
+    available_count = total_questions - used_count
+    
+    st.caption(f'📊 {page}: {used_count} usadas | {available_count} disponíveis | {total_questions} total | 🔗 Conectado ao Google Sheets')
+    
+    if available_count > 0:
+        progress = used_count / total_questions
+        st.progress(progress, text=f"Progresso: {progress:.1%}")
+    else:
+        st.success("🎉 Todas as perguntas foram processadas!")
 
 if __name__ == '__main__':
     main()
