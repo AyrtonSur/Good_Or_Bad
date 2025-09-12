@@ -39,12 +39,14 @@ def authenticate_google_sheets():
         if creds_text:
             # Use credentials from secrets (for deployment)
             import json
-            from io import StringIO
             creds_dict = json.loads(creds_text)
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        else:
-            # Fallback to local file (for development)
+        elif os.path.exists(CREDENTIALS_FILE):
+            # Fallback to local file only if it exists (for development)
             creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        else:
+            # No credentials available
+            raise FileNotFoundError("Nenhuma credencial encontrada. Configure GSPREAD_CREDENTIALS_JSON em st.secrets ou adicione credentials.json localmente.")
         
         client = gspread.authorize(creds)
         return client
@@ -83,27 +85,6 @@ def load_json_from_secrets_or_file(key_name='JSON_PAYLOAD', fallback_file=None):
         return read_json(fallback_file)
     else:
         return read_json(JSON_FILE_AYRTON)  # Default fallback
-
-
-def write_credentials_from_secrets(key_name='GSPREAD_CREDENTIALS_JSON'):
-    """If service account JSON is provided in secrets, write it to `credentials.json`.
-    This is mainly for backward compatibility with local development.
-    
-    Expects st.secrets['GSPREAD_CREDENTIALS_JSON'] to be the full JSON text.
-    """
-    try:
-        creds_text = None
-        if hasattr(st, 'secrets') and st.secrets:
-            creds_text = st.secrets.get(key_name)
-
-        if creds_text and not os.path.exists(CREDENTIALS_FILE):
-            # Only write file if it doesn't exist (for local development)
-            with open(CREDENTIALS_FILE, 'w', encoding='utf-8') as f:
-                f.write(creds_text)
-            return True
-    except Exception:
-        pass
-    return False
 
 def read_sheet_data(client, sheet_id, worksheet_name):
     """Lê dados de uma planilha Google Sheets"""
@@ -746,9 +727,6 @@ def main():
         st.session_state.json_data_pedro is None or 
         st.session_state.sheets_data is None):
         with st.spinner('Carregando dados iniciais...'):
-            # If secrets contain credentials, write them to local file for gspread
-            write_credentials_from_secrets()
-
             # Load JSON files for both users
             st.session_state.json_data_ayrton = load_json_from_secrets_or_file('JSON_PAYLOAD', JSON_FILE_AYRTON)
             st.session_state.json_data_pedro = load_json_from_secrets_or_file('JSON_PAYLOAD_PEDRO', JSON_FILE_PEDRO)
