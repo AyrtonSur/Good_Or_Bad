@@ -15,8 +15,8 @@ except ImportError:
 SHEETS_GOOD_ID = '1Iimtpui2WJlzrIGbJma6ucGrefuKWsGjshG9LCBEyHE'
 SHEETS_BAD_ID = '1ZJFoD_y8uNXXEWhB-iYTI-xkfQ8XxmDvInNx3PQkgUI'
 
-JSON_FILE_AYRTON = 'combined_jsons_without_context_clean_shuffled_part2.json'
-JSON_FILE_PEDRO = 'combined_jsons_without_context_clean_shuffled_part1.json'
+JSON_FILE_AYRTON = 'esg_full_splited_set_test_shuffled_part1.json'
+JSON_FILE_PEDRO = 'esg_full_splited_set_test_shuffled_part2.json'
 CREDENTIALS_FILE = 'credentials.json'
 
 # Campos extras do CSV/Sheets
@@ -202,6 +202,8 @@ def main():
         st.session_state.current_question_pedro = None
     if 'force_new_question' not in st.session_state:
         st.session_state.force_new_question = False
+    if 'saving_in_progress' not in st.session_state:
+        st.session_state.saving_in_progress = False
     
     # Sidebar para configurações globais
     with st.sidebar:
@@ -824,6 +826,13 @@ def main():
     
     st.info(f"📊 Estatísticas para {page}: {used_questions_count}/{total_questions} perguntas utilizadas | {len(available_questions)} restantes")
 
+    # Verifica se a pergunta atual já foi utilizada
+    pergunta_atual = next_data.get('question', '') if next_data else ''
+    pergunta_ja_usada = pergunta_atual in used_questions
+    
+    # Proteção adicional: desabilita se está salvando ou se já foi usada
+    botao_desabilitado = pergunta_ja_usada or st.session_state.saving_in_progress
+
     with col1:
         # Informações completas da pergunta atual
         st.subheader('📋 Informações da pergunta atual')
@@ -887,11 +896,29 @@ def main():
 
         # Botão de salvar
         st.markdown('---')
+        
+        # Mostra status se pergunta já foi usada
+        if pergunta_ja_usada:
+            st.warning("⚠️ Esta pergunta já foi salva anteriormente")
+        elif st.session_state.saving_in_progress:
+            st.info("💾 Salvamento em andamento...")
+            
         if st.button(
             '💾 Salvar no Google Sheets', 
             type="primary",
-            use_container_width=True
+            use_container_width=True,
+            disabled=botao_desabilitado
         ):
+            # Marca que o salvamento está em andamento
+            st.session_state.saving_in_progress = True
+            
+            # Dupla verificação: verifica novamente se a pergunta já foi salva
+            current_used_questions = get_used_questions(st.session_state.sheets_data, page)
+            if pergunta_atual in current_used_questions:
+                st.error("❌ Esta pergunta já foi salva! Não é possível salvar novamente.")
+                st.session_state.saving_in_progress = False
+                st.stop()
+            
             with st.spinner('Salvando...'):
                 row = {
                     'Contexto': next_data.get('context', ''),
@@ -941,8 +968,14 @@ def main():
                     else:
                         st.session_state.current_question_pedro = None
                     
+                    # Reset do flag de salvamento
+                    st.session_state.saving_in_progress = False
+                    
                     # Recarrega a página para mostrar a próxima pergunta
                     st.rerun()
+                else:
+                    # Se falhou ao salvar, reseta o flag
+                    st.session_state.saving_in_progress = False
 
     # Informações adicionais no rodapé
     st.markdown('---')
