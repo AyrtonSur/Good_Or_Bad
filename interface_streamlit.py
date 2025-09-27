@@ -860,8 +860,9 @@ def main():
         extra_values = {}
         for field in EXTRA_FIELDS:
             if field == 'isAlign':
-                # isAlign será puxado do JSON, não da interface
-                st.markdown(f"*{field}: {next_data.get(field, 0)} (do JSON)*")
+                # isAlign será puxado do deberta_answer do JSON, não da interface
+                deberta_value = next_data.get('deberta_answer', 0)
+                st.markdown(f"*{field}: {deberta_value} (do JSON - deberta_answer)*")
                 continue
             extra_values[field] = st.checkbox(
                 field, 
@@ -926,7 +927,7 @@ def main():
                     'Resposta': next_data.get('answer', ''),
                     'source_file': next_data.get('source_file', ''),
                     'stringFilter': next_data.get('stringFilter', 'none'),
-                    'isAlign': next_data.get('isAlign', 0),
+                    'isAlign': next_data.get('deberta_answer', 0),  # Pega deberta_answer do JSON e envia como isAlign
                     'isEnv': int(extra_values.get('isEnv', 0)),
                     'isSocial': int(extra_values.get('isSocial', 0)),
                     'isGovernance': int(extra_values.get('isGovernance', 0)),
