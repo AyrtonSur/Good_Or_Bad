@@ -149,12 +149,15 @@ def get_used_questions(sheets_data, user):
     return used_questions
 
 def get_available_questions(json_data, used_questions):
-    """Retorna lista de perguntas disponíveis (não utilizadas) do JSON"""
+    """Retorna lista de perguntas disponíveis (não utilizadas) do JSON, filtrando apenas gen_run = 2"""
     available = []
     
     for i, item in enumerate(json_data):
         question = item.get('question', '')
-        if question and question not in used_questions:
+        gen_run = item.get('gen_run', 0)  # Pega o gen_run do item
+        
+        # Filtra apenas perguntas com gen_run = 2 e que não foram utilizadas
+        if question and question not in used_questions and gen_run == 2:
             available.append((i, item))
     
     return available
@@ -607,7 +610,7 @@ def main():
             for user in ['Ayrton', 'Pedro']:
                 json_data = st.session_state.json_data_ayrton if user == 'Ayrton' else st.session_state.json_data_pedro
                 used_questions = get_used_questions(st.session_state.sheets_data, user)
-                total = len(json_data)
+                total = len(json_data)  # Total de todas as perguntas
                 used = len(used_questions)
                 available = total - used
                 
@@ -821,10 +824,10 @@ def main():
     # Mostrar estatísticas
     used_questions = get_used_questions(st.session_state.sheets_data, page)
     available_questions = get_available_questions(current_json, used_questions)
-    total_questions = len(current_json)
-    used_questions_count = total_questions - len(available_questions)
+    total_questions = len(current_json)  # Total de todas as perguntas
+    used_questions_count = len(used_questions)
     
-    st.info(f"📊 Estatísticas para {page}: {used_questions_count}/{total_questions} perguntas utilizadas | {len(available_questions)} restantes")
+    st.info(f"📊 Estatísticas para {page}: {used_questions_count}/{total_questions} perguntas utilizadas | {len(available_questions)} restantes (apenas Gen 2)")
 
     # Verifica se a pergunta atual já foi utilizada
     pergunta_atual = next_data.get('question', '') if next_data else ''
@@ -981,19 +984,19 @@ def main():
     # Informações adicionais no rodapé
     st.markdown('---')
     
-    # Calcula estatísticas de perguntas
+    # Calcula estatísticas de perguntas (conjunto completo)
     used_questions = get_used_questions(st.session_state.sheets_data, page)
-    total_questions = len(current_json)
+    total_questions = len(current_json)  # Total de todas as perguntas
     used_count = len(used_questions)
-    available_count = total_questions - used_count
+    available_gen2 = len(get_available_questions(current_json, used_questions))  # Disponíveis Gen 2
     
-    st.caption(f'📊 {page}: {used_count} usadas | {available_count} disponíveis | {total_questions} total | 🔗 Conectado ao Google Sheets')
+    st.caption(f'📊 {page}: {used_count}/{total_questions} usadas | {available_gen2} disponíveis Gen 2 | {total_questions} total | 🔗 Conectado ao Google Sheets')
     
-    if available_count > 0:
+    if available_gen2 > 0:
         progress = used_count / total_questions
         st.progress(progress, text=f"Progresso: {progress:.1%}")
     else:
-        st.success("🎉 Todas as perguntas foram processadas!")
+        st.success("🎉 Todas as perguntas da Gen 2 foram processadas!")
 
 if __name__ == '__main__':
     main()
